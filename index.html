@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Nebula Next Spawn</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 2rem;
+      background: #f9f9f9;
+    }
+
+    h1 {
+      text-align: center;
+    }
+
+    select {
+      padding: 0.5rem;
+      margin: 0 0.5rem;
+    }
+
+    table {
+      margin: 1rem auto;
+      min-width: 200px;
+      border-collapse: collapse;
+      background: #fff;
+    }
+
+    th,
+    td {
+      border: 1px solid #ccc;
+      padding: 0.5rem 1rem;
+      text-align: left;
+    }
+
+    th {
+      background: #eee;
+    }
+
+    .time {
+      color: #007BFF;
+    }
+
+    .controls {
+      margin: 1rem auto;
+      text-align: center;
+    }
+
+    @media (max-width: 600px) {
+      body {
+        padding: 1rem;
+      }
+
+      h1 {
+        font-size: 1.4rem;
+      }
+
+      table {
+        font-size: 0.85rem;
+      }
+
+      thead {
+        display: none;
+      }
+
+      th,
+      td {
+        padding: 0.4rem 0.6rem;
+        display: flex;
+        justify-content: space-between;
+        column-gap: 0.6rem;
+      }
+
+      td:first-child {
+        background: #eee;
+      }
+
+      td::before {
+        color: initial;
+      }
+
+      td:not(:first-child)::before {
+        content: attr(data-label);
+      }
+    }
+
+    @media (prefers-color-scheme: dark) {
+      body {
+        background: #121212;
+        color: #fff;
+      }
+
+      select {
+        background: #1e1e1e;
+        color: #fff;
+        border: 1px solid #555;
+      }
+
+      table {
+        background: #1e1e1e;
+      }
+
+      th {
+        background: #2e2e2e;
+      }
+
+      th,
+      td {
+        border-color: #555;
+      }
+
+      .time {
+        color: #4da6ff;
+      }
+
+      @media (max-width: 600px) {
+        td:first-child {
+          background: #2e2e2e;
+        }
+
+        td::before {
+          color: #fff;
+        }
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Nebula Next Spawn</h1>
+
+  <div class="controls">
+    <select name="cycle" id="cycleSelect">
+      <option value="">Select the current spawn</option>
+    </select>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Cycle</th>
+        <th scope="col" id="startTimeColumnHeader">Start Time (Local)</th>
+        <th scope="col">Chest</th>
+        <th scope="col">Ore</th>
+        <th scope="col">Next In</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Current</td>
+        <td class="time" id="currentStart" data-label="Start Time"></td>
+        <td id="currentChest" data-label="Chest"></td>
+        <td id="currentOre" data-label="Ore"></td>
+        <td data-label="Next In">-</td>
+      </tr>
+      <tr>
+        <td>Next</td>
+        <td class="time" id="nextStart" data-label="Start Time"></td>
+        <td id="nextChest" data-label="Chest"></td>
+        <td id="nextOre" data-label="Ore"></td>
+        <td class="time" data-label="Next In"><span id="nextRemaining" aria-live="polite">-</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <script>
+    const config = {
+      spawnCycles: [
+        { chest: "Shrine", ore: "Arkeum" },
+        { chest: "Arkeum", ore: "Orc" },
+        { chest: "Orc", ore: "Sanctuary" },
+        { chest: "Sanctuary", ore: "Shrine" }
+      ],
+      cycleDurationSeconds: 20 * 60
+    };
+
+    function formatLocalDateTime(date) {
+      return new Intl.DateTimeFormat(undefined, {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      }).format(date);
+    }
+
+    function getCycleStartAndInitialIndex(now) {
+      const saved = localStorage.getItem('cycleSelection');
+      if (saved) {
+        const data = JSON.parse(saved);
+        const savedTimestamp = new Date(data.timestamp).getTime();
+        const savedValue = data.value;
+        let savedIndex = -1;
+        try {
+          const savedCycle = JSON.parse(savedValue);
+          savedIndex = config.spawnCycles.findIndex(c => c.chest === savedCycle.chest && c.ore === savedCycle.ore);
+        } catch { }
+        if (savedIndex !== -1) {
+          const durationMilliseconds = config.cycleDurationSeconds * 1000;
+          return {
+            cycleStartMilliseconds: Math.floor(savedTimestamp / durationMilliseconds) * durationMilliseconds,
+            initialIndex: savedIndex
+          };
+        }
+      }
+      return {
+        cycleStartMilliseconds: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0)).getTime(),
+        initialIndex: 0
+      };
+    }
+
+    function calculateCurrentCycle(nowMilliseconds, cycleStartMilliseconds, initialIndex) {
+      const elapsedSeconds = (nowMilliseconds - cycleStartMilliseconds) / 1000;
+      const totalCyclesPassed = Math.floor(elapsedSeconds / config.cycleDurationSeconds);
+      const currentCycleCount = initialIndex + totalCyclesPassed;
+      return currentCycleCount % config.spawnCycles.length;
+    }
+
+    function updateDisplay(currentIndex, nextIndex, currentStartMilliseconds, nextStartMilliseconds, remainingMinutes, remainingSeconds) {
+      document.getElementById('currentStart').textContent = formatLocalDateTime(new Date(currentStartMilliseconds));
+      document.getElementById('currentChest').textContent = config.spawnCycles[currentIndex].chest;
+      document.getElementById('currentOre').textContent = config.spawnCycles[currentIndex].ore;
+      document.getElementById('nextStart').textContent = formatLocalDateTime(new Date(nextStartMilliseconds));
+      document.getElementById('nextChest').textContent = config.spawnCycles[nextIndex].chest;
+      document.getElementById('nextOre').textContent = config.spawnCycles[nextIndex].ore;
+      document.getElementById('nextRemaining').textContent = `${remainingMinutes}m ${String(remainingSeconds).padStart(2, '0')}s`;
+    }
+
+    function update() {
+      const saved = localStorage.getItem('cycleSelection');
+      if (!saved) return;
+
+      const now = new Date();
+      const nowMilliseconds = now.getTime();
+
+      const { cycleStartMilliseconds, initialIndex } = getCycleStartAndInitialIndex(now);
+      const currentIndex = calculateCurrentCycle(nowMilliseconds, cycleStartMilliseconds, initialIndex);
+
+      const currentCycleCount = Math.floor((nowMilliseconds - cycleStartMilliseconds) / 1000 / config.cycleDurationSeconds);
+      const currentStartMilliseconds = cycleStartMilliseconds + currentCycleCount * config.cycleDurationSeconds * 1000;
+
+      const nextCycleCount = currentCycleCount + 1;
+      const nextIndex = (currentIndex + 1) % config.spawnCycles.length;
+      const nextStartMilliseconds = cycleStartMilliseconds + nextCycleCount * config.cycleDurationSeconds * 1000;
+
+      const remainingMilliseconds = nextStartMilliseconds - nowMilliseconds;
+      const clampedRemainingMilliseconds = Math.max(0, remainingMilliseconds);
+      const remainingMinutes = Math.floor(clampedRemainingMilliseconds / 60000);
+      const remainingSeconds = Math.floor((clampedRemainingMilliseconds % 60000) / 1000);
+
+      updateDisplay(currentIndex, nextIndex, currentStartMilliseconds, nextStartMilliseconds, remainingMinutes, remainingSeconds);
+    }
+
+    document.getElementById('startTimeColumnHeader').textContent = `Start Time
+          (${Intl.DateTimeFormat().resolvedOptions().timeZone})`;
+
+    const select = document.getElementById('cycleSelect');
+    for (const cycle of config.spawnCycles) {
+      const option = document.createElement('option');
+      option.value = JSON.stringify(cycle);
+      option.textContent = `Chest: ${cycle.chest} - Ore: ${cycle.ore}`;
+      select.add(option);
+    }
+    select.addEventListener('change', (event) => {
+      const value = event.target.value;
+      if (value) {
+        const data = {
+          value: value,
+          timestamp: new Date().toISOString()
+        };
+        localStorage.setItem('cycleSelection', JSON.stringify(data));
+        update();
+      }
+    });
+
+    update();
+    setInterval(update, 1000);
+  </script>
+</body>
+
+</html>
